@@ -9,6 +9,10 @@ import tempfile
 import pandas as pd
 from collections import Counter
 import re
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # === Set your NER model here ===
 MODEL_NAME = "d4data/biomedical-ner-all"  # Change this to any HuggingFace NER model
@@ -55,10 +59,10 @@ def extract_patient_details(text):
 # Store data in MySQL
 def store_to_mysql(patient, entities):
     conn = mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="1234",
-        database="medical_ner"
+        host=os.environ.get('MYSQL_HOST', 'localhost'),
+        user=os.environ.get('MYSQL_USER', 'root'),
+        password=os.environ.get('MYSQL_PASSWORD', ''),
+        database=os.environ.get('MYSQL_DATABASE', 'medical_ner')
     )
     cursor = conn.cursor()
     
@@ -94,10 +98,10 @@ def store_to_mysql(patient, entities):
 # View reports from database
 def fetch_all_reports():
     conn = mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="1234",
-        database="medical_ner"
+        host=os.environ.get('MYSQL_HOST', 'localhost'),
+        user=os.environ.get('MYSQL_USER', 'root'),
+        password=os.environ.get('MYSQL_PASSWORD', ''),
+        database=os.environ.get('MYSQL_DATABASE', 'medical_ner')
     )
     cursor = conn.cursor(dictionary=True)
 
@@ -115,10 +119,10 @@ def fetch_all_reports():
 # Search reports
 def search_reports(query):
     conn = mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="1234",
-        database="medical_ner"
+        host=os.environ.get('MYSQL_HOST', 'localhost'),
+        user=os.environ.get('MYSQL_USER', 'root'),
+        password=os.environ.get('MYSQL_PASSWORD', ''),
+        database=os.environ.get('MYSQL_DATABASE', 'medical_ner')
     )
     cursor = conn.cursor(dictionary=True)
     
@@ -135,10 +139,10 @@ def search_reports(query):
 # Get statistics
 def get_entity_statistics():
     conn = mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="1234",
-        database="medical_ner"
+        host=os.environ.get('MYSQL_HOST', 'localhost'),
+        user=os.environ.get('MYSQL_USER', 'root'),
+        password=os.environ.get('MYSQL_PASSWORD', ''),
+        database=os.environ.get('MYSQL_DATABASE', 'medical_ner')
     )
     cursor = conn.cursor()
     cursor.execute("SELECT label FROM ner_entities")
