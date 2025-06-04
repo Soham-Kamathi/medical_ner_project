@@ -56,6 +56,24 @@ def extract_patient_details(text):
             details["gender"] = line.split(":")[-1].strip()
     return details
 
+# Add this function after the ner_pipeline definition
+def extract_ner_entities(text):
+    """
+    Process text through NER pipeline and standardize entity names.
+    
+    Args:
+        text (str): Medical text to process
+        
+    Returns:
+        list: Processed NER entities with standardized field names
+    """
+    entities = ner_pipeline(text)
+    # Rename the fields for better clarity
+    for entity in entities:
+        entity['label'] = entity.pop('entity_group')
+        entity['text'] = entity.pop('word')
+    return entities
+
 # Store data in MySQL
 def store_to_mysql(patient, entities):
     conn = mysql.connector.connect(
@@ -89,7 +107,7 @@ def store_to_mysql(patient, entities):
 
     for entity in entities:
         cursor.execute("INSERT INTO ner_entities (patient_id, entity, label) VALUES (%s, %s, %s)",
-                       (patient_id, entity['word'], entity['entity_group']))
+                       (patient_id, entity['text'], entity['label']))
 
     conn.commit()
     cursor.close()
@@ -173,10 +191,10 @@ if menu == "Upload Report":
             st.json(patient_details)
 
             st.write("**Performing Named Entity Recognition...**")
-            ner_results = ner_pipeline(text)
+            ner_results = extract_ner_entities(text)
             st.write("**Extracted Medical Entities:**")
             for ent in ner_results:
-                st.markdown(f"- **{ent['entity_group']}**: {ent['word']}")
+                st.markdown(f"- **{ent['label']}**: {ent['text']}")
 
             store_to_mysql(patient_details, ner_results)
 
