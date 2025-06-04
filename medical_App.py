@@ -75,7 +75,7 @@ def extract_ner_entities(text):
     return entities
 
 # Store data in MySQL
-def store_to_mysql(patient, entities):
+def store_to_mysql(patient, entities, filename):
     conn = mysql.connector.connect(
         host=os.environ.get('MYSQL_HOST', 'localhost'),
         user=os.environ.get('MYSQL_USER', 'root'),
@@ -84,30 +84,61 @@ def store_to_mysql(patient, entities):
     )
     cursor = conn.cursor()
     
+    # Create patients table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS patient_data (
+        CREATE TABLE IF NOT EXISTS patients (
             id INT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(255),
-            age VARCHAR(50),
-            gender VARCHAR(10)
+            age INT,
+            gender ENUM('Male', 'Female', 'Other', 'Unknown') DEFAULT 'Unknown'
         )""")
 
+    # Create reports table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ner_entities (
+        CREATE TABLE IF NOT EXISTS reports (
             id INT AUTO_INCREMENT PRIMARY KEY,
             patient_id INT,
-            entity TEXT,
-            label TEXT,
-            FOREIGN KEY(patient_id) REFERENCES patient_data(id)
+            filename VARCHAR(255),
+            processed BOOLEAN DEFAULT FALSE,
+            FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
         )""")
 
-    cursor.execute("INSERT INTO patient_data (name, age, gender) VALUES (%s, %s, %s)",
-                   (patient['name'], patient['age'], patient['gender']))
+    # Create ner_results table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ner_results (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            report_id INT,
+            text TEXT,
+            label VARCHAR(255),
+            FOREIGN KEY (report_id) REFERENCES reports(id) ON DELETE CASCADE
+        )""")
+
+    # Insert patient data
+    # Convert age to integer, handle edge cases
+    age_int = None
+    if patient['age'].isdigit():
+        age_int = int(patient['age'])
+    
+    # Normalize gender values
+    gender_normalized = 'Unknown'
+    if patient['gender'].lower() in ['male', 'm']:
+        gender_normalized = 'Male'
+    elif patient['gender'].lower() in ['female', 'f']:
+        gender_normalized = 'Female'
+    
+    cursor.execute("INSERT INTO patients (name, age, gender) VALUES (%s, %s, %s)",
+                   (patient['name'], age_int, gender_normalized))
     patient_id = cursor.lastrowid
 
+    # Insert report data
+    cursor.execute("INSERT INTO reports (patient_id, filename, processed) VALUES (%s, %s, %s)",
+                   (patient_id, filename, True))
+    report_id = cursor.lastrowid
+
+    # Insert NER entities
     for entity in entities:
-        cursor.execute("INSERT INTO ner_entities (patient_id, entity, label) VALUES (%s, %s, %s)",
-                       (patient_id, entity['text'], entity['label']))
+        cursor.execute("INSERT INTO ner_results (report_id, text, label) VALUES (%s, %s, %s)",
+                       (report_id, entity['text'], entity['label']))
 
     conn.commit()
     cursor.close()
@@ -123,16 +154,43 @@ def fetch_all_reports():
     )
     cursor = conn.cursor(dictionary=True)
 
-    cursor.execute("SELECT * FROM patient_data")
-    patients = cursor.fetchall()
+    # Get all patients with their reports and NER results
+    cursor.execute("""
+        SELECT p.id, p.name, p.age, p.gender, r.id as report_id, r.filename, r.processed
+        FROM patients p
+        LEFT JOIN reports r ON p.id = r.patient_id
+        ORDER BY p.id, r.id
+    """)
+    rows = cursor.fetchall()
 
-    for patient in patients:
-        cursor.execute("SELECT entity, label FROM ner_entities WHERE patient_id = %s", (patient['id'],))
-        patient['entities'] = cursor.fetchall()
+    # Group by patient and organize data
+    patients = {}
+    for row in rows:
+        patient_id = row['id']
+        if patient_id not in patients:
+            patients[patient_id] = {
+                'id': row['id'],
+                'name': row['name'],
+                'age': row['age'],
+                'gender': row['gender'],
+                'reports': []
+            }
+        
+        if row['report_id']:
+            # Get NER entities for this report
+            cursor.execute("SELECT text, label FROM ner_results WHERE report_id = %s", (row['report_id'],))
+            entities = cursor.fetchall()
+            
+            patients[patient_id]['reports'].append({
+                'report_id': row['report_id'],
+                'filename': row['filename'],
+                'processed': row['processed'],
+                'entities': entities
+            })
 
     cursor.close()
     conn.close()
-    return patients
+    return list(patients.values())
 
 # Search reports
 def search_reports(query):
@@ -145,11 +203,24 @@ def search_reports(query):
     cursor = conn.cursor(dictionary=True)
     
     cursor.execute("""
-        SELECT DISTINCT pd.* FROM patient_data pd
-        LEFT JOIN ner_entities ne ON pd.id = ne.patient_id
-        WHERE pd.name LIKE %s OR pd.id = %s OR ne.entity LIKE %s
-    """, (f"%{query}%", query if query.isdigit() else -1, f"%{query}%"))
+        SELECT DISTINCT p.id, p.name, p.age, p.gender, r.filename
+        FROM patients p
+        LEFT JOIN reports r ON p.id = r.patient_id
+        LEFT JOIN ner_results nr ON r.id = nr.report_id
+        WHERE p.name LIKE %s OR p.id = %s OR nr.text LIKE %s OR nr.label LIKE %s
+    """, (f"%{query}%", query if query.isdigit() else -1, f"%{query}%", f"%{query}%"))
     results = cursor.fetchall()
+    
+    # Get entities for each result
+    for result in results:
+        cursor.execute("""
+            SELECT nr.text, nr.label, r.filename
+            FROM ner_results nr
+            JOIN reports r ON nr.report_id = r.id
+            WHERE r.patient_id = %s
+        """, (result['id'],))
+        result['entities'] = cursor.fetchall()
+    
     cursor.close()
     conn.close()
     return results
@@ -163,7 +234,7 @@ def get_entity_statistics():
         database=os.environ.get('MYSQL_DATABASE', 'medical_ner')
     )
     cursor = conn.cursor()
-    cursor.execute("SELECT label FROM ner_entities")
+    cursor.execute("SELECT label FROM ner_results")
     labels = [row[0] for row in cursor.fetchall()]
     cursor.close()
     conn.close()
@@ -196,7 +267,7 @@ if menu == "Upload Report":
             for ent in ner_results:
                 st.markdown(f"- **{ent['label']}**: {ent['text']}")
 
-            store_to_mysql(patient_details, ner_results)
+            store_to_mysql(patient_details, ner_results, uploaded_file.name)
 
             os.remove(tmp_file_path)
 
@@ -204,12 +275,20 @@ if menu == "Upload Report":
 
 elif menu == "View Reports":
     reports = fetch_all_reports()
-    for report in reports:
-        st.markdown(f"### Patient ID: {report['id']} | Name: {report['name']}")
-        st.write(f"**Age**: {report['age']}, **Gender**: {report['gender']}")
-        st.write("**Medical Entities:**")
-        for ent in report['entities']:
-            st.markdown(f"- **{ent['label']}**: {ent['entity']}")
+    for patient in reports:
+        st.markdown(f"### Patient ID: {patient['id']} | Name: {patient['name']}")
+        st.write(f"**Age**: {patient['age']}, **Gender**: {patient['gender']}")
+        
+        if patient['reports']:
+            for report in patient['reports']:
+                st.write(f"**Report**: {report['filename']} | **Processed**: {report['processed']}")
+                st.write("**Medical Entities:**")
+                for entity in report['entities']:
+                    st.markdown(f"- **{entity['label']}**: {entity['text']}")
+                st.write("---")
+        else:
+            st.write("No reports found for this patient.")
+        st.write("=" * 50)
 
 elif menu == "Search Reports":
     query = st.text_input("Enter patient name, ID, or medical entity")
