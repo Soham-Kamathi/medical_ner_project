@@ -6,6 +6,20 @@ A Streamlit-based web application for extracting, analyzing, and storing medical
 
 ---
 
+## 📁 Project Structure
+
+```
+medical_ner_project/
+├── app.py              # Main Streamlit application
+├── config.py           # Configuration and model loading
+├── database.py         # Database operations
+├── requirements.txt    # Python dependencies
+├── .env               # Environment variables (create this)
+└── README.md          # Project documentation
+```
+
+---
+
 ## 🚀 Features
 
 - **PDF Upload:** Upload one or more medical PDF reports.
@@ -70,7 +84,7 @@ CREATE DATABASE medical_ner;
 
 ### Change the NER Model
 
-At the top of `medical_App.py`, set the model you want to use:
+In `config.py`, set the model you want to use:
 
 ```python
 MODEL_NAME = "d4data/biomedical-ner-all"  # Or any other HuggingFace NER model
@@ -82,10 +96,9 @@ You can find more models [here](https://huggingface.co/models?pipeline_tag=token
 
 ## ▶️ Usage
 
-Run the Streamlit app:
-
+### Run the application
 ```bash
-streamlit run medical_App.py
+streamlit run app.py
 ```
 
 Open the provided local URL in your browser.
@@ -119,12 +132,12 @@ Open the provided local URL in your browser.
 ## 🧩 File Structure
 
 ```
-medical-report-analyzer/
-│
-├── medical_App.py         # Main Streamlit application
-├── requirements.txt       # Python dependencies
-├── README.md              # This file
-└── ...                    # Other files/assets
+medical_ner_project/
+├── app.py              # Main Streamlit application
+├── config.py           # Configuration and model loading  
+├── database.py         # Database operations
+├── requirements.txt    # Python dependencies
+└── README.md           # Project documentation
 ```
 
 ---
@@ -132,7 +145,7 @@ medical-report-analyzer/
 ## ❓ FAQ
 
 **Q: How do I change the NER model?**  
-A: Edit the `MODEL_NAME` variable at the top of `medical_App.py`.
+A: Edit the `MODEL_NAME` variable in `config.py`.
 
 **Q: I get a MySQL connection error!**  
 A: Make sure your MySQL server is running and the credentials in the script are correct.
