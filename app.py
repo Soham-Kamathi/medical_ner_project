@@ -14,55 +14,96 @@ from database import store_to_mysql, fetch_all_reports, search_reports, get_enti
 # Load NER model
 ner_pipeline = load_ner_model()
 
+def check_database_connection():
+    """Check if database connection is available and tables exist."""
+    try:
+        # Try to fetch reports to test connection
+        fetch_all_reports()
+        return True
+    except Exception as e:
+        return False
+
+def show_no_database_message():
+    """Show a consistent message when database is not available."""
+    st.info("💡 Upload some reports first to initialize the database.")
 
 def extract_text_from_pdf(pdf_path):
     """Extract text from PDF using PyMuPDF."""
-    doc = fitz.open(pdf_path)
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    return text
+    try:
+        doc = fitz.open(pdf_path)
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        doc.close()  # Always close the document
+        
+        if not text.strip():
+            st.error("⚠️ No readable text found in PDF. File might be image-based or corrupted.")
+            return None
+            
+        return text
+    except Exception as e:
+        st.error(f"❌ Failed to extract text from PDF: {str(e)}")
+        return None
 
 
 def extract_patient_details(text):
-    """Extract patient details using simple keyword search."""
+    """Extract patient details with better validation."""
     details = {
         "name": "",
         "age": "",
         "gender": ""
     }
+    
     lines = text.split('\n')
     for line in lines:
-        if "Name" in line:
-            details["name"] = line.split(":")[-1].strip()
-        elif "Age" in line:
-            # Extract only digits (and possibly years)
-            age_match = re.search(r"\d+", line)
+        line_lower = line.lower()
+        
+        # More flexible name extraction
+        if any(keyword in line_lower for keyword in ["name:", "patient:", "patient name:"]):
+            name = line.split(":")[-1].strip()
+            if len(name) > 1 and len(name) < 50:  # Reasonable name length
+                details["name"] = name
+                
+        # Better age extraction
+        elif any(keyword in line_lower for keyword in ["age:", "age ", "years old"]):
+            age_match = re.search(r"(\d{1,3})", line)
             if age_match:
-                details["age"] = age_match.group()
-            else:
-                details["age"] = line.split(":")[-1].strip()[:10]  # fallback, truncate to 10 chars
-        elif "Gender" in line:
-            details["gender"] = line.split(":")[-1].strip()
+                age = int(age_match.group(1))
+                if 0 <= age <= 120:  # Reasonable age range
+                    details["age"] = str(age)
+                    
+        # Better gender extraction
+        elif any(keyword in line_lower for keyword in ["gender:", "sex:", "male", "female"]):
+            if "male" in line_lower:
+                details["gender"] = "Male" if "female" not in line_lower else "Female"
+            elif "female" in line_lower:
+                details["gender"] = "Female"
+    
     return details
 
-
 def extract_ner_entities(text):
-    """
-    Process text through NER pipeline and standardize entity names.
-    
-    Args:
-        text (str): Medical text to process
+    """Process text through NER pipeline with error handling."""
+    try:
+        if not text or not text.strip():
+            st.warning("⚠️ No text provided for NER processing")
+            return []
+            
+        entities = ner_pipeline(text)
         
-    Returns:
-        list: Processed NER entities with standardized field names
-    """
-    entities = ner_pipeline(text)
-    # Rename the fields for better clarity
-    for entity in entities:
-        entity['label'] = entity.pop('entity_group')
-        entity['text'] = entity.pop('word')
-    return entities
+        # Add confidence threshold
+        filtered_entities = []
+        for entity in entities:
+            if entity.get('score', 0) > 0.3:  # Only show confident predictions
+                entity['label'] = entity.pop('entity_group', 'UNKNOWN')
+                entity['text'] = entity.pop('word', '')
+                entity['confidence'] = round(entity.get('score', 0), 2)
+                filtered_entities.append(entity)
+        
+        return filtered_entities
+        
+    except Exception as e:
+        st.error(f"❌ NER processing failed: {str(e)}")
+        return []
 
 
 # Streamlit UI
@@ -71,62 +112,180 @@ st.title("Medical Report Analyzer")
 menu = st.sidebar.selectbox("Choose an option", ["Upload Report", "View Reports", "Search Reports", "Statistics"])
 
 if menu == "Upload Report":
-    uploaded_files = st.file_uploader("Upload one or more PDF files", type="pdf", accept_multiple_files=True)
+    st.info("📋 Upload medical reports in PDF format for analysis")
+    
+    uploaded_files = st.file_uploader(
+        "Choose PDF files", 
+        type="pdf", 
+        accept_multiple_files=True,
+        help="Maximum file size: 10MB per file"
+    )
 
     if uploaded_files:
+        # Validate file sizes
         for uploaded_file in uploaded_files:
+            if uploaded_file.size > 10 * 1024 * 1024:  # 10MB limit
+                st.error(f"❌ File {uploaded_file.name} is too large (max 10MB)")
+                continue
+        
+        # Process files with progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for i, uploaded_file in enumerate(uploaded_files):
+            progress_bar.progress((i + 1) / len(uploaded_files))
+            status_text.text(f"Processing {uploaded_file.name}...")
+            
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(uploaded_file.read())
                 tmp_file_path = tmp_file.name
 
-            st.subheader(f"Processing {uploaded_file.name}")
+            st.subheader(f"📄 {uploaded_file.name}")
+            
             text = extract_text_from_pdf(tmp_file_path)
+            if not text:
+                continue  # Skip if text extraction failed
+                
             patient_details = extract_patient_details(text)
 
-            st.write("**Extracted Patient Details:**")
-            st.json(patient_details)
+            # Show results in columns
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**👤 Patient Details:**")
+                if any(patient_details.values()):
+                    st.json(patient_details)
+                else:
+                    st.warning("⚠️ No patient details found")
 
-            st.write("**Performing Named Entity Recognition...**")
-            ner_results = extract_ner_entities(text)
-            st.write("**Extracted Medical Entities:**")
-            for ent in ner_results:
-                st.markdown(f"- **{ent['label']}**: {ent['text']}")
+            with col2:
+                st.write("**🏥 Medical Entities:**")
+                ner_results = extract_ner_entities(text)
+                
+                if ner_results:
+                    for ent in ner_results:
+                        confidence_color = "🟢" if ent['confidence'] > 0.8 else "🟡" if ent['confidence'] > 0.5 else "🔴"
+                        st.markdown(f"{confidence_color} **{ent['label']}**: {ent['text']} `({ent['confidence']})`")
+                else:
+                    st.warning("⚠️ No medical entities detected")
 
-            store_to_mysql(patient_details, ner_results, uploaded_file.name)
+            # Only store if we have valid data
+            if text and (any(patient_details.values()) or ner_results):
+                store_to_mysql(patient_details, ner_results, uploaded_file.name)
+                st.success(f"✅ {uploaded_file.name} processed successfully")
+            else:
+                st.warning(f"⚠️ {uploaded_file.name} contained no useful data")
 
             os.remove(tmp_file_path)
+            st.divider()
 
-        st.success("All files processed and stored in the database.")
+        status_text.text("✅ All files processed!")
 
 elif menu == "View Reports":
-    reports = fetch_all_reports()
-    for patient in reports:
-        st.markdown(f"### Patient ID: {patient['id']} | Name: {patient['name']}")
-        st.write(f"**Age**: {patient['age']}, **Gender**: {patient['gender']}")
-        
-        if patient['reports']:
-            for report in patient['reports']:
-                st.write(f"**Report**: {report['filename']} | **Processed**: {report['processed']}")
-                st.write("**Medical Entities:**")
-                for entity in report['entities']:
-                    st.markdown(f"- **{entity['label']}**: {entity['text']}")
-                st.write("---")
-        else:
-            st.write("No reports found for this patient.")
-        st.write("=" * 50)
+    st.subheader("📊 Stored Medical Reports")
+    
+    if not check_database_connection():
+        show_no_database_message()
+    else:
+        try:
+            reports = fetch_all_reports()
+            
+            if not reports:
+                st.info("📋 No reports found. Upload some PDF files first!")
+            else:
+                # Add search filter
+                search_filter = st.text_input("🔍 Filter by patient name or ID:")
+                
+                for patient in reports:
+                    # Apply filter
+                    if search_filter and search_filter.lower() not in patient.get('name', '').lower():
+                        continue
+                        
+                    with st.expander(f"👤 Patient: {patient.get('name', 'Unknown')} (ID: {patient['id']})"):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("Age", patient.get('age', 'N/A'))
+                        with col2:
+                            st.metric("Gender", patient.get('gender', 'N/A'))
+                        with col3:
+                            st.metric("Reports", len(patient.get('reports', [])))
+                        
+                        if patient.get('reports'):
+                            for report in patient['reports']:
+                                st.write(f"📄 **{report['filename']}** (Processed: {report['processed']})")
+                                
+                                if report.get('entities'):
+                                    entity_df = pd.DataFrame(report['entities'])
+                                    st.dataframe(entity_df, use_container_width=True)
+                                else:
+                                    st.info("No entities found in this report")
+                                st.divider()
+                        else:
+                            st.info("No reports for this patient")
+                            
+        except Exception as e:
+            st.error(f"❌ Failed to load reports: {str(e)}")
+            show_no_database_message()
 
 elif menu == "Search Reports":
-    query = st.text_input("Enter patient name, ID, or medical entity")
-    if query:
-        results = search_reports(query)
-        if results:
-            for result in results:
-                st.markdown(f"### Patient ID: {result['id']} | Name: {result['name']}")
-                st.write(f"**Age**: {result['age']}, **Gender**: {result['gender']}")
-        else:
-            st.warning("No matching reports found.")
+    st.subheader("🔍 Search Medical Reports")
+    
+    if not check_database_connection():
+        show_no_database_message()
+    else:
+        query = st.text_input("Enter patient name, ID, or medical entity")
+        if query:
+            try:
+                results = search_reports(query)
+                if results:
+                    for result in results:
+                        st.markdown(f"### Patient ID: {result['id']} | Name: {result['name']}")
+                        st.write(f"**Age**: {result['age']}, **Gender**: {result['gender']}")
+                else:
+                    st.warning("No matching reports found.")
+            except Exception as e:
+                st.error(f"❌ Search failed: {str(e)}")
+                show_no_database_message()
 
 elif menu == "Statistics":
-    stats = get_entity_statistics()
-    st.subheader("Entity Frequency")
-    st.bar_chart(pd.DataFrame.from_dict(stats, orient='index', columns=['Count']))
+    st.subheader("📈 Analytics Dashboard")
+    
+    if not check_database_connection():
+        show_no_database_message()
+    else:
+        try:
+            stats = get_entity_statistics()
+            
+            if stats:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**🏷️ Entity Frequency**")
+                    df = pd.DataFrame.from_dict(stats, orient='index', columns=['Count'])
+                    st.bar_chart(df)
+                
+                with col2:
+                    st.write("**📊 Top Entities**")
+                    sorted_stats = dict(sorted(stats.items(), key=lambda x: x[1], reverse=True)[:10])
+                    for entity, count in sorted_stats.items():
+                        st.metric(entity.replace('_', ' ').title(), count)
+                
+                # Summary metrics
+                st.divider()
+                col3, col4, col5 = st.columns(3)
+                
+                with col3:
+                    st.metric("Total Entities", sum(stats.values()))
+                with col4:
+                    st.metric("Unique Entity Types", len(stats))
+                with col5:
+                    most_common = max(stats.items(), key=lambda x: x[1])
+                    st.metric("Most Common", f"{most_common[0]} ({most_common[1]})")
+                    
+            else:
+                st.info("📋 No statistics available. Process some reports first!")
+                
+        except Exception as e:
+            st.error(f"❌ Failed to load statistics: {str(e)}")
+            show_no_database_message()
