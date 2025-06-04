@@ -11,6 +11,14 @@ import re
 from config import load_ner_model
 from database import store_to_mysql, fetch_all_reports, search_reports, get_entity_statistics
 
+# NER Configuration
+NER_CONFIG = {
+    'confidence_threshold': 0.5,  # Minimum confidence score
+    'max_entities': 20,           # Maximum entities to display
+    'min_text_length': 2,         # Minimum entity text length
+    'high_confidence_threshold': 0.8  # Threshold for high confidence entities
+}
+
 # Load NER model
 ner_pipeline = load_ner_model()
 
@@ -82,7 +90,7 @@ def extract_patient_details(text):
     return details
 
 def extract_ner_entities(text):
-    """Process text through NER pipeline with error handling."""
+    """Process text through NER pipeline with enhanced filtering."""
     try:
         if not text or not text.strip():
             st.warning("⚠️ No text provided for NER processing")
@@ -90,16 +98,68 @@ def extract_ner_entities(text):
             
         entities = ner_pipeline(text)
         
-        # Add confidence threshold
+        # Enhanced filtering with multiple criteria
         filtered_entities = []
-        for entity in entities:
-            if entity.get('score', 0) > 0.3:  # Only show confident predictions
-                entity['label'] = entity.pop('entity_group', 'UNKNOWN')
-                entity['text'] = entity.pop('word', '')
-                entity['confidence'] = round(entity.get('score', 0), 2)
-                filtered_entities.append(entity)
+        seen_entities = set()  # To avoid duplicates
         
-        return filtered_entities
+        for entity in entities:
+            confidence = entity.get('score', 0)
+            text_content = entity.get('word', '').strip()
+            label = entity.get('entity_group', 'UNKNOWN')
+            
+            # Skip if confidence too low
+            if confidence < NER_CONFIG['confidence_threshold']:
+                continue
+            
+            # Skip very short or invalid text
+            if len(text_content) < NER_CONFIG['min_text_length']:
+                continue
+                
+            # Skip entities that are just numbers or special characters
+            if text_content.isdigit() or not any(c.isalpha() for c in text_content):
+                continue
+                
+            # Skip common non-medical words that get misclassified
+            skip_words = {
+                'yes', 'no', 'male', 'female', 'work', 'employment', 'report',
+                'date', 'name', 'full', 'registration', 'passport', 'residence',
+                'worker', 'foreign', 'malaysia', 'my', 'fit', 'dr', 'md'
+            }
+            if text_content.lower() in skip_words:
+                continue
+            
+            # Skip fragmented tokens (those starting with ##)
+            if text_content.startswith('##'):
+                continue
+            
+            # Skip single characters or very common words
+            if len(text_content) == 1 or text_content.lower() in ['a', 'b', 'c', 'x', 'op']:
+                continue
+            
+            # Create a unique key to avoid duplicates
+            entity_key = (text_content.lower(), label)
+            if entity_key in seen_entities:
+                continue
+            seen_entities.add(entity_key)
+            
+            # Only keep high-confidence medical entities
+            medical_labels = {
+                'Disease_disorder', 'Medication', 'Diagnostic_procedure',
+                'Therapeutic_procedure', 'Biological_structure', 'Sign_symptom'
+            }
+            
+            if label in medical_labels or confidence > NER_CONFIG['high_confidence_threshold']:
+                filtered_entities.append({
+                    'label': label,
+                    'text': text_content,
+                    'confidence': round(confidence, 2)
+                })
+        
+        # Sort by confidence (highest first) and limit results
+        filtered_entities.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        # Return top entities to avoid overwhelming display
+        return filtered_entities[:NER_CONFIG['max_entities']]
         
     except Exception as e:
         st.error(f"❌ NER processing failed: {str(e)}")
@@ -108,6 +168,24 @@ def extract_ner_entities(text):
 
 # Streamlit UI
 st.title("Medical Report Analyzer")
+
+# Sidebar configuration
+st.sidebar.header("🔧 NER Settings")
+NER_CONFIG['confidence_threshold'] = st.sidebar.slider(
+    "Minimum Confidence Score", 
+    min_value=0.1, 
+    max_value=1.0, 
+    value=0.5, 
+    step=0.1,
+    help="Lower values show more entities but with lower confidence"
+)
+NER_CONFIG['max_entities'] = st.sidebar.slider(
+    "Maximum Entities to Show", 
+    min_value=5, 
+    max_value=50, 
+    value=20, 
+    step=5
+)
 
 menu = st.sidebar.selectbox("Choose an option", ["Upload Report", "View Reports", "Search Reports", "Statistics"])
 
