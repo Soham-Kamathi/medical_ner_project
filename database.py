@@ -172,3 +172,54 @@ def get_entity_statistics():
     cursor.close()
     conn.close()
     return dict(Counter(labels))
+
+
+def delete_patient(patient_id):
+    """Delete a patient and all associated data from the database.
+    
+    Args:
+        patient_id (int): The ID of the patient to delete
+        
+    Returns:
+        dict: Success status and message
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # First, check if patient exists
+        cursor.execute("SELECT name FROM patients WHERE id = %s", (patient_id,))
+        patient = cursor.fetchone()
+        
+        if not patient:
+            return {"success": False, "message": "Patient not found"}
+        
+        patient_name = patient[0]
+        
+        # Get count of reports to be deleted (for confirmation message)
+        cursor.execute("SELECT COUNT(*) FROM reports WHERE patient_id = %s", (patient_id,))
+        report_count = cursor.fetchone()[0]
+        
+        # Get count of NER entities to be deleted
+        cursor.execute("""
+            SELECT COUNT(*) FROM ner_results nr 
+            JOIN reports r ON nr.report_id = r.id 
+            WHERE r.patient_id = %s
+        """, (patient_id,))
+        entity_count = cursor.fetchone()[0]
+        
+        # Delete patient (CASCADE will automatically delete reports and ner_results)
+        cursor.execute("DELETE FROM patients WHERE id = %s", (patient_id,))
+        
+        if cursor.rowcount > 0:
+            conn.commit()
+            message = f"Successfully deleted patient '{patient_name}' (ID: {patient_id}) with {report_count} report(s) and {entity_count} medical entities"
+            return {"success": True, "message": message}
+        else:
+            return {"success": False, "message": "Failed to delete patient"}
+            
+    except Exception as e:
+        return {"success": False, "message": f"Database error: {str(e)}"}
+    finally:
+        cursor.close()
+        conn.close()

@@ -9,7 +9,7 @@ import pandas as pd
 import re
 
 from config import load_ner_model
-from database import store_to_mysql, fetch_all_reports, search_reports, get_entity_statistics
+from database import store_to_mysql, fetch_all_reports, search_reports, get_entity_statistics, delete_patient
 
 # NER Configuration
 NER_CONFIG = {
@@ -273,14 +273,13 @@ elif menu == "View Reports":
             else:
                 # Add search filter
                 search_filter = st.text_input("🔍 Filter by patient name or ID:")
-                
                 for patient in reports:
                     # Apply filter
                     if search_filter and search_filter.lower() not in patient.get('name', '').lower():
                         continue
                         
                     with st.expander(f"👤 Patient: {patient.get('name', 'Unknown')} (ID: {patient['id']})"):
-                        col1, col2, col3 = st.columns(3)
+                        col1, col2, col3, col4 = st.columns(4)
                         
                         with col1:
                             st.metric("Age", patient.get('age', 'N/A'))
@@ -288,6 +287,31 @@ elif menu == "View Reports":
                             st.metric("Gender", patient.get('gender', 'N/A'))
                         with col3:
                             st.metric("Reports", len(patient.get('reports', [])))
+                        with col4:
+                            # Delete patient button
+                            if st.button(f"🗑️ Delete", key=f"delete_{patient['id']}", type="secondary"):
+                                # Show confirmation dialog
+                                st.session_state[f"confirm_delete_{patient['id']}"] = True
+                        
+                        # Confirmation dialog
+                        if st.session_state.get(f"confirm_delete_{patient['id']}", False):
+                            st.warning(f"⚠️ Are you sure you want to delete patient '{patient.get('name', 'Unknown')}'? This will permanently remove all their reports and medical data.")
+                            
+                            col_yes, col_no = st.columns(2)
+                            with col_yes:
+                                if st.button("✅ Yes, Delete", key=f"confirm_yes_{patient['id']}", type="primary"):
+                                    result = delete_patient(patient['id'])
+                                    if result['success']:
+                                        st.success(result['message'])
+                                        st.session_state[f"confirm_delete_{patient['id']}"] = False
+                                        st.rerun()  # Refresh the page to update the list
+                                    else:
+                                        st.error(result['message'])
+                            
+                            with col_no:
+                                if st.button("❌ Cancel", key=f"confirm_no_{patient['id']}", type="secondary"):
+                                    st.session_state[f"confirm_delete_{patient['id']}"] = False
+                                    st.rerun()
                         
                         if patient.get('reports'):
                             for report in patient['reports']:
