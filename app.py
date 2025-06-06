@@ -64,19 +64,24 @@ def extract_patient_details(text):
     
     # Name extraction patterns
     name_patterns = [
-        r'(?:patient\s*name|full\s*name|name)\s*[:=]\s*([a-zA-Z\s]{2,50})',
-        r'(?:patient|name)\s*[:=]\s*([a-zA-Z\s]{2,50})',
-        r'name\s*[:=]\s*([a-zA-Z\s]{2,50})',
-        r'mr\.?\s+([a-zA-Z\s]{2,50})|mrs\.?\s+([a-zA-Z\s]{2,50})|ms\.?\s+([a-zA-Z\s]{2,50})',
-        r'patient\s+([a-zA-Z\s]{2,50})(?:\s+(?:aged?|age|is))',
+        r'\b(?:mr|mrs|ms)\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b',
+        r'\bname\s*:\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\b',
+        r'\b(?:name|patient)\s*[:=]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b',
+        r'your patient\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b',
+        r're:.*?for\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+),\s*MRN',
+        r'dear\s+dr\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)[:,]',
+        r'patient\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+),?\s+(?:aged?|age|is)',
     ]
     
     # Age extraction patterns
     age_patterns = [
+        r'\((\d{1,3})\s*(?:years?\s*old|yrs?\s*old|y\.o\.)\)',
         r'(?:age|aged?)\s*[:=]?\s*(\d{1,3})\s*(?:years?|yrs?|y\.o\.?)?',
         r'(\d{1,3})\s*(?:years?\s*old|yrs?\s*old|y\.o\.)',
         r'aged?\s+(\d{1,3})',
         r'age\s*[:=]\s*(\d{1,3})',
+        r'DOB:\s*\d{2}/\d{2}/\d{4}\s*\((\d{1,3})\s*(?:years?\s*old|yrs?\s*old|y\.o\.)\)',
+        r'(\d{1,3})\s*[-]?\s*year[-\s]*old',
     ]
     
     # Gender extraction patterns
