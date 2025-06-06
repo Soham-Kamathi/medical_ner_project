@@ -42,7 +42,7 @@ def extract_text_from_pdf(pdf_path):
         text = ""
         for page in doc:
             text += page.get_text()
-        doc.close()  # Always close the document
+        doc.close() 
         
         if not text.strip():
             st.error("⚠️ No readable text found in PDF. File might be image-based or corrupted.")
@@ -55,37 +55,87 @@ def extract_text_from_pdf(pdf_path):
 
 
 def extract_patient_details(text):
-    """Extract patient details with better validation."""
+    """Extract patient details using comprehensive regex patterns."""
     details = {
         "name": "",
         "age": "",
         "gender": ""
     }
     
-    lines = text.split('\n')
-    for line in lines:
-        line_lower = line.lower()
-        
-        # More flexible name extraction
-        if any(keyword in line_lower for keyword in ["name:", "patient:", "patient name:"]):
-            name = line.split(":")[-1].strip()
-            if len(name) > 1 and len(name) < 50:  # Reasonable name length
-                details["name"] = name
-                
-        # Better age extraction
-        elif any(keyword in line_lower for keyword in ["age:", "age ", "years old"]):
-            age_match = re.search(r"(\d{1,3})", line)
-            if age_match:
-                age = int(age_match.group(1))
+    # Name extraction patterns
+    name_patterns = [
+        r'(?:patient\s*name|full\s*name|name)\s*[:=]\s*([a-zA-Z\s]{2,50})',
+        r'(?:patient|name)\s*[:=]\s*([a-zA-Z\s]{2,50})',
+        r'name\s*[:=]\s*([a-zA-Z\s]{2,50})',
+        r'mr\.?\s+([a-zA-Z\s]{2,50})|mrs\.?\s+([a-zA-Z\s]{2,50})|ms\.?\s+([a-zA-Z\s]{2,50})',
+        r'patient\s+([a-zA-Z\s]{2,50})(?:\s+(?:aged?|age|is))',
+    ]
+    
+    # Age extraction patterns
+    age_patterns = [
+        r'(?:age|aged?)\s*[:=]?\s*(\d{1,3})\s*(?:years?|yrs?|y\.o\.?)?',
+        r'(\d{1,3})\s*(?:years?\s*old|yrs?\s*old|y\.o\.)',
+        r'aged?\s+(\d{1,3})',
+        r'age\s*[:=]\s*(\d{1,3})',
+    ]
+    
+    # Gender extraction patterns
+    gender_patterns = [
+        r'(?:gender|sex)\s*[:=]\s*(male|female|m|f)',
+        r'\b(male|female)\b(?!\s*(?:patient|doctor|nurse))',
+        r'(?:mr\.?|male)\b',  # Male indicators
+        r'(?:mrs\.?|ms\.?|female)\b',  # Female indicators
+    ]
+    
+    # Extract name
+    for pattern in name_patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if match:
+            # Get the first non-empty group
+            name = next((group for group in match.groups() if group), "").strip()
+            if name and len(name) > 1 and len(name) < 50:
+                # Clean up the name (remove extra spaces, common prefixes)
+                name = re.sub(r'\s+', ' ', name)  # Multiple spaces to single
+                name = re.sub(r'^(?:mr\.?|mrs\.?|ms\.?|dr\.?)\s*', '', name, flags=re.IGNORECASE)
+                if name and not re.match(r'^\d+$', name):  # Not just numbers
+                    details["name"] = name.title()
+                    break
+    
+    # Extract age
+    for pattern in age_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            age_str = match.group(1)
+            try:
+                age = int(age_str)
                 if 0 <= age <= 120:  # Reasonable age range
                     details["age"] = str(age)
-                    
-        # Better gender extraction
-        elif any(keyword in line_lower for keyword in ["gender:", "sex:", "male", "female"]):
-            if "male" in line_lower:
-                details["gender"] = "Male" if "female" not in line_lower else "Female"
-            elif "female" in line_lower:
+                    break
+            except ValueError:
+                continue
+    
+    # Extract gender
+    for pattern in gender_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            gender_text = match.group(1) if match.groups() else match.group(0)
+            gender_lower = gender_text.lower()
+            
+            if gender_lower in ['male', 'm', 'mr', 'mr.']:
+                details["gender"] = "Male"
+                break
+            elif gender_lower in ['female', 'f', 'mrs', 'mrs.', 'ms', 'ms.']:
                 details["gender"] = "Female"
+                break
+    
+    # Fallback: Search for gender keywords in broader context
+    if not details["gender"]:
+        if re.search(r'\bmale\b(?!\s*(?:patient|doctor|nurse))', text, re.IGNORECASE):
+            # Check if 'female' appears nearby to avoid false positives
+            if not re.search(r'\bfemale\b', text, re.IGNORECASE):
+                details["gender"] = "Male"
+        elif re.search(r'\bfemale\b', text, re.IGNORECASE):
+            details["gender"] = "Female"
     
     return details
 
@@ -123,7 +173,7 @@ def extract_ner_entities(text):
             skip_words = {
                 'yes', 'no', 'male', 'female', 'work', 'employment', 'report',
                 'date', 'name', 'full', 'registration', 'passport', 'residence',
-                'worker', 'foreign', 'malaysia', 'my', 'fit', 'dr', 'md'
+                'worker', 'foreign', 'my', 'fit', 'dr', 'md'
             }
             if text_content.lower() in skip_words:
                 continue
@@ -132,7 +182,7 @@ def extract_ner_entities(text):
             if text_content.startswith('##'):
                 continue
             
-            # Skip single characters or very common words
+            # Skip single characters
             if len(text_content) == 1 or text_content.lower() in ['a', 'b', 'c', 'x', 'op']:
                 continue
             
