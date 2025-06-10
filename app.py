@@ -64,6 +64,8 @@ def extract_patient_details(text):
     
     # Name extraction patterns
     name_patterns = [
+        r'patient\s+name\s*:\s*(?:(?:mr|mrs|ms|dr)\.?\s+)?([A-Z][A-Z\s]+?)(?=\s*(?:study|age|referring|sex|gender|$|\n))',
+        r'(?:patient\s+)?name\s*:\s*(?:(?:mr|mrs|ms|dr)\.?\s+)?([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){1,4})(?=\s*(?:\n|$|study|age|dob|sex|gender|mrn|address|phone))',
         r'\b(?:mr|mrs|ms)\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b',
         r'\bname\s*:\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\b',
         r'\b(?:name|patient)\s*[:=]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b',
@@ -75,6 +77,8 @@ def extract_patient_details(text):
     
     # Age extraction patterns
     age_patterns = [
+        r'age\s*[:=]\s*(\d{1,3})(?:\s*(?:years?|yrs?|y\.?o\.?))?',
+        r'\((\d{1,3})\s*(?:years?\s*old|yrs?\s*old|y\.o\.)\)',
         r'\((\d{1,3})\s*(?:years?\s*old|yrs?\s*old|y\.o\.)\)',
         r'(?:age|aged?)\s*[:=]?\s*(\d{1,3})\s*(?:years?|yrs?|y\.o\.?)?',
         r'(\d{1,3})\s*(?:years?\s*old|yrs?\s*old|y\.o\.)',
